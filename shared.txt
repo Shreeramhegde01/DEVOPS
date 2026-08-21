@@ -1,0 +1,2 @@
+This is the shared file on the main branch.
+Line added by main branch - this line will cause a conflict when both branches modify it.
