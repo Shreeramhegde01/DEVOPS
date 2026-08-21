@@ -1,2 +1,2 @@
 This is the shared file on the main branch.
-Line modified by BRANCH 1 - Branch 1 says: "Feature A is complete!"
+Both features are complete! Branch 1: "Feature A is complete!" | Branch 2: "Feature B is complete!" [CONFLICT RESOLVED]
