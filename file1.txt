@@ -1,0 +1,4 @@
+Hello from Branch 1!
+This is File 1 created in feature/branch-1.
+Author: Shreeram Hegde
+Purpose: Demonstrate feature development in a separate branch.
