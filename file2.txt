@@ -1,0 +1,4 @@
+Hello from Branch 2!
+This is File 2 created in feature/branch-2.
+Author: Shreeram Hegde
+Purpose: Demonstrate parallel feature development causing a merge conflict.

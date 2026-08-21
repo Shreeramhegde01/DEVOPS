@@ -1,2 +1,2 @@
 This is the shared file on the main branch.
-Line added by main branch - this line will cause a conflict when both branches modify it.
+Line modified by BRANCH 2 - Branch 2 says: "Feature B is complete!"
