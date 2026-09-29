@@ -20,8 +20,9 @@ def main():
     print(f"1. Created book {book['id']} '{title}'")
 
     old = get_container(docker_client, DB_CONTAINER)
-    print(f"2. Removing MongoDB container {DB_CONTAINER} ({old.short_id}) completely ...")
-    old.remove(force=True)
+    print(f"2. Stopping and removing MongoDB container {DB_CONTAINER} ({old.short_id}) completely ...")
+    old.stop(timeout=30)   # graceful shutdown: mongod flushes its journal to the volume first
+    old.remove()
     status, _ = http_json("GET", "/api/books")
     print(f"   while the DB is gone, GET /api/books -> HTTP {status}")
 

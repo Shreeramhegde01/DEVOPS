@@ -3,7 +3,8 @@ FROM python:3.11-slim
 WORKDIR /app
 ENV PIP_NO_CACHE_DIR=1 \
     PYTHONUNBUFFERED=1 \
-    HF_HOME=/tmp/hf-cache
+    HF_HOME=/tmp/hf-cache \
+    HF_HUB_DISABLE_PROGRESS_BARS=1
 
 # CPU-only PyTorch: ~2 GB smaller than the default CUDA build and enough for this model
 RUN pip install torch==2.4.1+cpu --extra-index-url https://download.pytorch.org/whl/cpu

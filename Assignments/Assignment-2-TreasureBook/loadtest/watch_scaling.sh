@@ -2,7 +2,7 @@
 # Records the autoscaler every 10 s while the load test runs (Ctrl+C to stop).
 # Output: results/scaling-<timestamp>.csv  - use it for the performance report.
 set -uo pipefail
-cd "$(dirname "$0")"
+cd "$(dirname "$0")" || exit 1
 mkdir -p results
 OUT="results/scaling-$(date +%Y%m%d-%H%M%S).csv"
 

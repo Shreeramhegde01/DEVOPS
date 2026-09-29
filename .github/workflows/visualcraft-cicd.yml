@@ -17,6 +17,7 @@ concurrency:
 
 env:
   CI_LOG: /tmp/ci.log
+  BASH_ENV: ${{ github.workspace }}/.github/scripts/ci_env.sh
 
 defaults:
   run:
@@ -52,22 +53,18 @@ jobs:
         run: docker pull urmsandeep/ai-artistic-style-service:latest
       - name: Deploy with Docker Compose
         run: |
-          exec > >(tee -a "$CI_LOG") 2>&1
           docker compose up -d --build
           docker compose ps
       - name: API test (smoke test)
         run: |
-          exec > >(tee -a "$CI_LOG") 2>&1
           python tests/smoke_test.py --url http://localhost:5001 --wait 300 --output output/styled_output.jpg | tee /tmp/smoke.txt
           bash "$GITHUB_WORKSPACE/.github/scripts/notice.sh" "VisualCraft smoke test" /tmp/smoke.txt
       - name: Generate traffic (200 / 400 / 500)
         run: |
-          exec > >(tee -a "$CI_LOG") 2>&1
           python scripts/generate_traffic.py --requests 40 --concurrency 4 | tee /tmp/traffic.txt
           bash "$GITHUB_WORKSPACE/.github/scripts/notice.sh" "VisualCraft traffic" /tmp/traffic.txt
       - name: Prometheus scrapes all targets and records the API metrics
         run: |
-          exec > >(tee -a "$CI_LOG") 2>&1
           query() { curl -s --get localhost:9090/api/v1/query --data-urlencode "query=$1"; }
           targets=""
           for _ in $(seq 1 30); do
@@ -76,8 +73,10 @@ jobs:
             [[ "$targets" != *"=down"* && "$targets" != *"=unknown"* ]] && break
             sleep 5
           done
+          sleep 30   # let a few scrapes accumulate so rate() has data
           {
             echo "targets: $targets"
+            echo "cAdvisor CPU series: $(query 'count by (name) (container_cpu_usage_seconds_total{name=~"ai-artistic-style|style-api-gateway"})')"
             echo "requests by status: $(query 'sum by (status) (styletransfer_requests_total)')"
             echo "avg latency (s): $(query 'sum(rate(styletransfer_request_duration_seconds_sum[5m])) / sum(rate(styletransfer_request_duration_seconds_count[5m]))')"
             echo "AI container CPU %: $(query 'sum by (name) (rate(container_cpu_usage_seconds_total{name="ai-artistic-style"}[1m])) * 100')"
@@ -89,13 +88,11 @@ jobs:
           grep -q 'ai-artistic-style' /tmp/prom.txt
       - name: Grafana dashboard is provisioned
         run: |
-          exec > >(tee -a "$CI_LOG") 2>&1
           for _ in $(seq 1 30); do curl -sf localhost:3000/api/health && break; sleep 2; done
           curl -sf -u admin:admin localhost:3000/api/datasources/uid/prometheus/health
           curl -sf -u admin:admin "localhost:3000/api/search?query=VisualCraft" | grep visualcraft-api
       - name: Resilience test (crash -> automatic restart -> recovery)
         run: |
-          exec > >(tee -a "$CI_LOG") 2>&1
           bash scripts/resilience_test.sh | tee /tmp/resilience.txt
           grep -E "^==|restarted|PASS" /tmp/resilience.txt | bash "$GITHUB_WORKSPACE/.github/scripts/notice.sh" "VisualCraft resilience"
       - name: Upload the stylized images

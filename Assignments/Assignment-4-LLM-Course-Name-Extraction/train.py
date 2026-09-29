@@ -133,6 +133,7 @@ def main():
             logging_steps=25,
             save_strategy="no",
             report_to="none",
+            disable_tqdm=True,      # print the loss every 25 steps instead of a progress bar
             seed=SEED,
         ),
         train_dataset=tokenized,

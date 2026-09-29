@@ -78,9 +78,15 @@ pipeline {
                           "import urllib.request; print(urllib.request.urlopen('http://localhost:8000/metrics').read().decode())" \
                           | grep -E '^(total|pending|on_the_way)_deliveries'
 
-                        echo "Prometheus scrape targets:"
-                        docker compose exec -T prometheus wget -qO- http://localhost:9090/api/v1/targets \
-                          | grep -oE '"(job|health)":"[^"]*"'
+                        echo "Prometheus scrape targets (discovery needs a few seconds after start-up):"
+                        for i in $(seq 1 20); do
+                          TARGETS=$(docker compose exec -T prometheus wget -qO- http://localhost:9090/api/v1/targets \
+                                    | grep -oE '"(job|health)":"[^"]*"' || true)
+                          echo "$TARGETS" | grep -q '"health":"up"' && break
+                          sleep 3
+                        done
+                        echo "$TARGETS"
+                        echo "$TARGETS" | grep -q '"job":"delivery_service"'
 
                         docker compose ps
                     '''

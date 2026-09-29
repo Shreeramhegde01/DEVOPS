@@ -40,6 +40,7 @@ Build **before** applying the ReplicaSet so the Pods find the image straight awa
 eval $(minikube docker-env)                     # PowerShell: & minikube docker-env --shell powershell | Invoke-Expression
 docker build -t flashsale:1.0 .
 ```
+(or, with any container runtime: `minikube image build -t flashsale:1.0 .` – see the note in Exercise 2.)
 (Optional – push to Docker Hub instead: `docker build -t <user>/flashsale:1.0 . && docker push <user>/flashsale:1.0`
 and change `image:` in the YAML.)
 

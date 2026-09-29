@@ -6,12 +6,13 @@
 annotate() {   # $1 = title, stdin = text
   python3 -c '
 import sys
-text = sys.stdin.read()[-7000:]
+lines = [line.split("\r")[-1] for line in sys.stdin.read().splitlines()]   # drop progress-bar redraws
+text = "\n".join(lines)[-3500:]
 text = text.replace("%", "%25").replace("\r", "").replace("\n", "%0A")
 print(f"::error title={sys.argv[1]}::{text}")' "$1"
 }
 
-tail -n 60 "${CI_LOG:-/tmp/ci.log}" 2>/dev/null | annotate "Failure log (last 60 lines)"
+tail -n 60 "${CI_LOG:-/tmp/ci.log}" 2>/dev/null | annotate "Failure log (last lines)"
 if [ -n "${1:-}" ]; then
   bash -c "$1" 2>&1 | tail -n 60 | annotate "Diagnostics"
 fi

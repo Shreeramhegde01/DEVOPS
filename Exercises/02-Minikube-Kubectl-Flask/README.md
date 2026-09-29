@@ -47,6 +47,10 @@ docker build -t flask-app .
 ```
 (Alternative on any OS: `minikube image build -t flask-app .`)
 
+> If `minikube docker-env` answers *"The docker-env command is only compatible with the docker runtime"*, your
+> Minikube uses containerd (the default in recent versions). Either recreate it with
+> `minikube delete && minikube start --container-runtime=docker`, or simply use `minikube image build -t flask-app .`.
+
 ### 3. Deploy
 ```bash
 kubectl apply -f flask-deployment.yaml
