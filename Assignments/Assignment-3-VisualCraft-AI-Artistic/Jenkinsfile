@@ -1,0 +1,110 @@
+// CI/CD pipeline for the VisualCraft AI Artistic Style Service.
+// Job: Pipeline -> "Pipeline script from SCM" -> this repository, branch main,
+// Script Path: Assignments/Assignment-3-VisualCraft-AI-Artistic/Jenkinsfile
+// Runs on the Jenkins image from Exercise 7 (docker CLI + compose + python3, host Docker socket mounted).
+pipeline {
+    agent any
+
+    // Poll GitHub every 2 minutes: pushing a change to the repository triggers test + redeploy automatically.
+    // (A GitHub webhook is instant but needs Jenkins to be reachable from the internet.)
+    triggers {
+        pollSCM('H/2 * * * *')
+    }
+
+    parameters {
+        string(name: 'SERVICE_URL', defaultValue: 'http://host.docker.internal:5001',
+               description: 'How Jenkins reaches the deployed API. Use http://localhost:5001 if Jenkins runs directly on the host.')
+        booleanParam(name: 'RUN_RESILIENCE_TEST', defaultValue: true,
+                     description: 'Crash the AI container and verify it restarts automatically')
+    }
+
+    options {
+        timeout(time: 40, unit: 'MINUTES')
+        disableConcurrentBuilds()
+    }
+
+    environment {
+        APP_DIR = 'Assignments/Assignment-3-VisualCraft-AI-Artistic'
+        COMPOSE_PROJECT_NAME = 'visualcraft'
+        SERVICE_URL = "${params.SERVICE_URL ?: 'http://host.docker.internal:5001'}"
+    }
+
+    stages {
+        stage('Run Tests') {
+            steps {
+                dir(env.APP_DIR) {
+                    echo 'Unit-testing the metrics gateway before anything is deployed...'
+                    sh '''
+                        python3 -m venv .venv
+                        .venv/bin/pip install -q -r gateway/requirements.txt pytest
+                        .venv/bin/python -m pytest -v gateway/tests
+                    '''
+                }
+            }
+        }
+
+        stage('Pull Docker Image') {
+            steps {
+                // Pull the pre-built AI image from Docker Hub
+                sh 'docker pull urmsandeep/ai-artistic-style-service:latest'
+            }
+        }
+
+        stage('Build Images') {
+            steps {
+                dir(env.APP_DIR) {
+                    sh 'docker compose build'
+                }
+            }
+        }
+
+        stage('Deploy Service') {
+            steps {
+                dir(env.APP_DIR) {
+                    // "up -d" only recreates the containers whose image or configuration changed
+                    sh 'docker compose up -d --remove-orphans'
+                    sh 'docker compose ps'
+                }
+            }
+        }
+
+        stage('Verify Deployment') {
+            steps {
+                dir(env.APP_DIR) {
+                    sh '''
+                        .venv/bin/python tests/smoke_test.py --url "$SERVICE_URL" --wait 300 \
+                            --output output/styled_output.jpg
+                    '''
+                    archiveArtifacts artifacts: "output/styled_output.jpg", fingerprint: true
+                }
+            }
+        }
+
+        stage('Resilience Test') {
+            when {
+                expression { params.RUN_RESILIENCE_TEST != false }
+            }
+            steps {
+                dir(env.APP_DIR) {
+                    sh 'PYTHON=.venv/bin/python bash scripts/resilience_test.sh'
+                }
+            }
+        }
+    }
+
+    post {
+        always {
+            // clean up dangling images left behind by rebuilds (keeps running containers untouched)
+            sh 'docker image prune -f'
+        }
+        success {
+            echo 'Pipeline executed successfully. The service is running and functional!'
+        }
+        failure {
+            echo 'Pipeline failed. Check logs for errors.'
+            dir(env.APP_DIR) {
+                sh 'docker compose ps; docker compose logs --tail=40 || true'
+            }
+        }
+    }
+}

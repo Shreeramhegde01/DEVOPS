@@ -1,0 +1,86 @@
+# VisualCraft - AI Artistic Style Service with monitoring
+#   docker compose up -d --build
+#   API        http://localhost:5001/styleTransfer   (POST, form field "image")
+#   Prometheus http://localhost:9090
+#   Grafana    http://localhost:3000   (admin / admin -> VisualCraft -> "VisualCraft - API Performance")
+name: visualcraft
+
+services:
+  # The provided AI image (Flask + PyTorch "mosaic" fast-neural-style model) listening on 5001
+  ai-artistic-style-service:
+    image: urmsandeep/ai-artistic-style-service:latest
+    container_name: ai-artistic-style
+    restart: always                     # restart automatically on failures (resilience requirement)
+    expose:
+      - "5001"                          # reachable on the compose network; clients go through the gateway
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('localhost', 5001), 2)"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 120s                # loading PyTorch + the model takes a while
+
+  # Public API on port 5001: forwards /styleTransfer to the AI container and exposes /metrics
+  style-api-gateway:
+    build: ./gateway
+    image: visualcraft/style-api-gateway:1.0
+    container_name: style-api-gateway
+    restart: always
+    environment:
+      UPSTREAM_URL: http://ai-artistic-style:5001
+    ports:
+      - "5001:5001"
+    depends_on:
+      - ai-artistic-style-service
+
+  prometheus:
+    build: ./prometheus
+    image: visualcraft/prometheus:1.0
+    container_name: visualcraft-prometheus
+    restart: always
+    ports:
+      - "9090:9090"
+
+  grafana:
+    build: ./grafana
+    image: visualcraft/grafana:1.0
+    container_name: visualcraft-grafana
+    restart: always
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+
+  # System-level metrics of the Docker host / VM
+  node-exporter:
+    image: prom/node-exporter:v1.8.2
+    container_name: visualcraft-node-exporter
+    restart: always
+    command:
+      - --path.procfs=/host/proc
+      - --path.sysfs=/host/sys
+      - --collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+
+  # Per-container CPU / memory usage
+  cadvisor:
+    image: ghcr.io/google/cadvisor:v0.60.6
+    container_name: visualcraft-cadvisor
+    restart: always
+    privileged: true
+    devices:
+      - /dev/kmsg
+    command:
+      - --docker_only=true
+      - --housekeeping_interval=10s
+      - --store_container_labels=false
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro

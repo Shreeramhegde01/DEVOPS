@@ -1,0 +1,32 @@
+groups:
+  - name: visualcraft_alerts
+    rules:
+      - alert: AIServiceDown
+        expr: styletransfer_upstream_up == 0
+        for: 30s
+        labels:
+          severity: critical
+        annotations:
+          summary: "AI Artistic Style Service is not accepting connections"
+          description: "The gateway cannot reach ai-artistic-style:5001 for 30 seconds."
+
+      - alert: HighErrorRate
+        expr: |
+          sum(rate(styletransfer_requests_total{status=~"5.."}[2m]))
+            / sum(rate(styletransfer_requests_total[2m])) > 0.10
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "More than 10% of style transfers fail"
+          description: "5xx ratio is {{ $value | humanizePercentage }} over the last 2 minutes."
+
+      - alert: HighLatency
+        expr: |
+          histogram_quantile(0.95, sum by (le) (rate(styletransfer_request_duration_seconds_bucket[5m]))) > 5
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Style transfer p95 latency above 5 s"
+          description: "p95 latency is {{ $value | humanizeDuration }}."

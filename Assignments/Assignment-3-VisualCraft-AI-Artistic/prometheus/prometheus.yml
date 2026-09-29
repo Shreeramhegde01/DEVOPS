@@ -1,0 +1,27 @@
+global:
+  scrape_interval: 5s
+  evaluation_interval: 15s
+
+rule_files:
+  - /etc/prometheus/alert_rules.yml
+
+scrape_configs:
+  - job_name: "prometheus"
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  # API usage: request counts by status code, request rate and latency.
+  # (The AI image has no /metrics endpoint itself - the gateway in front of it measures every call.)
+  - job_name: "ai-artistic-style-service"
+    static_configs:
+      - targets: ["style-api-gateway:5001"]
+
+  # Host (Docker VM) CPU / memory / disk
+  - job_name: "node-exporter"
+    static_configs:
+      - targets: ["node-exporter:9100"]
+
+  # Per-container CPU / memory (incl. the AI container)
+  - job_name: "cadvisor"
+    static_configs:
+      - targets: ["cadvisor:8080"]

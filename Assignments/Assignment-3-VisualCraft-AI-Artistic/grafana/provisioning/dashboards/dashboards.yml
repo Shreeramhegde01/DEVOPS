@@ -1,0 +1,7 @@
+apiVersion: 1
+providers:
+  - name: visualcraft
+    folder: VisualCraft
+    type: file
+    options:
+      path: /etc/grafana/dashboards
