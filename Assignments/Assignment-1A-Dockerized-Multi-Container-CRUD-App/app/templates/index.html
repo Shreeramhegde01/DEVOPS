@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Library Catalogue</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 860px; margin: 2rem auto; padding: 0 1rem; color: #1f2933; }
+    h1 { margin-bottom: .2rem; } p.sub { color: #616e7c; margin-top: 0; }
+    form { display: flex; gap: .5rem; flex-wrap: wrap; margin: 1.2rem 0; }
+    input { padding: .45rem .6rem; border: 1px solid #cbd2d9; border-radius: 6px; }
+    button { padding: .45rem .9rem; border: 0; border-radius: 6px; background: #2563eb; color: #fff; cursor: pointer; }
+    button.secondary { background: #e4e7eb; color: #1f2933; } button.danger { background: #dc2626; }
+    table { width: 100%; border-collapse: collapse; } th, td { text-align: left; padding: .5rem; border-bottom: 1px solid #e4e7eb; }
+    #msg { min-height: 1.2rem; color: #b91c1c; }
+  </style>
+</head>
+<body>
+  <h1>Library Catalogue</h1>
+  <p class="sub">Flask container &harr; MongoDB container on a custom Docker bridge network</p>
+
+  <form id="book-form">
+    <input type="hidden" id="book-id">
+    <input id="title" placeholder="Title" required>
+    <input id="author" placeholder="Author">
+    <input id="year" placeholder="Year" type="number">
+    <button type="submit" id="save">Add book</button>
+    <button type="button" class="secondary" id="cancel" hidden>Cancel</button>
+  </form>
+  <div id="msg"></div>
+
+  <table>
+    <thead><tr><th>Title</th><th>Author</th><th>Year</th><th></th></tr></thead>
+    <tbody id="rows"></tbody>
+  </table>
+
+<script>
+const $ = id => document.getElementById(id);
+
+async function api(method, url, body) {
+  const res = await fetch(url, { method, headers: { "Content-Type": "application/json" }, body: body && JSON.stringify(body) });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || res.statusText);
+  return data;
+}
+
+function resetForm() {
+  $("book-form").reset(); $("book-id").value = ""; $("save").textContent = "Add book"; $("cancel").hidden = true;
+}
+
+async function load() {
+  const rows = $("rows");
+  rows.replaceChildren();
+  for (const b of await api("GET", "/api/books")) {
+    const tr = document.createElement("tr");
+    for (const v of [b.title, b.author ?? "", b.year ?? ""]) {
+      const td = document.createElement("td"); td.textContent = v; tr.appendChild(td);
+    }
+    const actions = document.createElement("td");
+    const edit = Object.assign(document.createElement("button"), { className: "secondary", textContent: "Edit" });
+    edit.onclick = () => {
+      $("book-id").value = b.id; $("title").value = b.title; $("author").value = b.author ?? ""; $("year").value = b.year ?? "";
+      $("save").textContent = "Update book"; $("cancel").hidden = false;
+    };
+    const del = Object.assign(document.createElement("button"), { className: "danger", textContent: "Delete" });
+    del.onclick = async () => { await api("DELETE", `/api/books/${b.id}`); load(); };
+    actions.append(edit, " ", del);
+    tr.appendChild(actions);
+    rows.appendChild(tr);
+  }
+}
+
+$("book-form").onsubmit = async e => {
+  e.preventDefault();
+  const book = { title: $("title").value, author: $("author").value, year: $("year").value };
+  try {
+    const id = $("book-id").value;
+    await (id ? api("PUT", `/api/books/${id}`, book) : api("POST", "/api/books", book));
+    $("msg").textContent = ""; resetForm(); load();
+  } catch (err) { $("msg").textContent = err.message; }
+};
+$("cancel").onclick = resetForm;
+load().catch(err => $("msg").textContent = err.message);
+</script>
+</body>
+</html>
