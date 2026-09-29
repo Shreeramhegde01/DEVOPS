@@ -1,0 +1,473 @@
+# Runs every lab of this repository on a Linux runner: unit tests, lint, image builds, the Docker / AppArmor /
+# Kubernetes / Jenkins exercises end to end, and the LLM assignment. Results are published as annotations.
+name: DevOps Lab CI
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: lab-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CI_LOG: /tmp/ci.log
+
+jobs:
+  unit-tests:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install test dependencies
+        run: pip install -q flask==3.0.3 pymongo==4.10.1 mongomock prometheus-client==0.21.0 requests pytest
+      - name: Run all test suites
+        run: |
+          exec > >(tee -a "$CI_LOG") 2>&1
+          status=0
+          for dir in Exercises/02-* Exercises/03-* Exercises/04-* Exercises/06-* Exercises/09-* Exercises/10-* \
+                     Assignments/Assignment-1A-*/app Assignments/Assignment-1B-*/app \
+                     Assignments/Assignment-2-*/app Assignments/Assignment-3-*/gateway; do
+            echo "::group::$dir"
+            if ! (cd "$dir" && python -m pytest -q -p no:cacheprovider); then
+              status=1
+              echo "::error title=Unit tests failed::$dir"
+            fi
+            echo "::endgroup::"
+          done
+          exit $status
+      - if: failure()
+        run: bash .github/scripts/annotate_failure.sh
+
+  lint:
+    name: Lint configs and scripts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: shellcheck
+        run: |
+          exec > >(tee -a "$CI_LOG") 2>&1
+          git ls-files '*.sh' | xargs shellcheck -S warning
+      - name: docker compose config
+        run: |
+          exec > >(tee -a "$CI_LOG") 2>&1
+          for f in $(git ls-files '*docker-compose.yml'); do echo "$f"; docker compose -f "$f" config -q; done
+      - name: promtool (Prometheus configs and alert rules)
+        run: |
+          exec > >(tee -a "$CI_LOG") 2>&1
+          for d in Exercises/06-Grafana-Realtime-Monitoring-of-Quick-Commerce-App Assignments/Assignment-3-VisualCraft-AI-Artistic/prometheus; do
+            docker run --rm -v "$PWD/$d/prometheus.yml:/etc/prometheus/prometheus.yml" \
+              -v "$PWD/$d/alert_rules.yml:/etc/prometheus/alert_rules.yml" \
+              --entrypoint promtool prom/prometheus:v2.54.1 check config /etc/prometheus/prometheus.yml
+          done
+      - name: kubeconform (Kubernetes manifests)
+        run: |
+          exec > >(tee -a "$CI_LOG") 2>&1
+          curl -sL https://github.com/yannh/kubeconform/releases/latest/download/kubeconform-linux-amd64.tar.gz | tar xz
+          git ls-files '*.yaml' | xargs ./kubeconform -strict -summary
+      - name: AppArmor profiles compile
+        run: |
+          exec > >(tee -a "$CI_LOG") 2>&1
+          sudo apt-get install -y -qq apparmor-utils > /dev/null
+          for p in Exercises/05-Docker-Security-AppArmor/my-apparmor-profile \
+                   Assignments/Assignment-1B-Secured-App-AppArmor-Health-Monitoring/apparmor/flask-auth-profile; do
+            sudo apparmor_parser -Q -K "$p" && echo "OK $p"
+          done
+      - name: Grafana dashboards are valid JSON
+        run: |
+          exec > >(tee -a "$CI_LOG") 2>&1
+          for f in $(git ls-files '*.json'); do python3 -m json.tool "$f" > /dev/null && echo "OK $f"; done
+      - if: failure()
+        run: bash .github/scripts/annotate_failure.sh
+
+  docker-build:
+    name: Build ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: ex02-flask, context: Exercises/02-Minikube-Kubectl-Flask, file: Dockerfile }
+          - { name: ex03-flashsale, context: Exercises/03-Minikube-Scaling-Flask-App-with-Replicasets, file: Dockerfile }
+          - { name: ex05-flask-apparmor, context: Exercises/05-Docker-Security-AppArmor, file: Dockerfile }
+          - { name: ex06-grafana, context: Exercises/06-Grafana-Realtime-Monitoring-of-Quick-Commerce-App, file: Dockerfile.grafana }
+          - { name: ex07-jenkins, context: Exercises/07-Jenkins-CI-Automation, file: Dockerfile }
+          - { name: ex10-product-catalog, context: Exercises/10-Minikube-Multi-Node-Multi-App-Deployment, file: Dockerfile.product }
+          - { name: ex10-shopping-cart, context: Exercises/10-Minikube-Multi-Node-Multi-App-Deployment, file: Dockerfile.shopping }
+          - { name: a2-treasurebook-api, context: Assignments/Assignment-2-TreasureBook/app, file: Dockerfile }
+          - { name: a3-gateway, context: Assignments/Assignment-3-VisualCraft-AI-Artistic/gateway, file: Dockerfile }
+    steps:
+      - uses: actions/checkout@v4
+      - name: docker build
+        run: |
+          exec > >(tee -a "$CI_LOG") 2>&1
+          docker build -f "${{ matrix.context }}/${{ matrix.file }}" "${{ matrix.context }}"
+      - if: failure()
+        run: bash .github/scripts/annotate_failure.sh
+
+  ex04-networking:
+    name: "Ex 4: Docker networking"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run all tasks
+        run: |
+          exec > >(tee -a "$CI_LOG") 2>&1
+          bash Exercises/04-Docker-Networking/run-network-demo.sh | tee /tmp/ex4.txt
+          grep -A3 -E "Container IPs|Flask -> MySQL" /tmp/ex4.txt | bash .github/scripts/notice.sh "Exercise 4"
+      - if: failure()
+        run: bash .github/scripts/annotate_failure.sh "docker ps -a; docker logs flask; docker logs mysql | tail -20"
+
+  ex06-monitoring:
+    name: "Ex 6: Prometheus + Grafana"
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: Exercises/06-Grafana-Realtime-Monitoring-of-Quick-Commerce-App
+    steps:
+      - uses: actions/checkout@v4
+      - name: docker compose up
+        run: |
+          exec > >(tee -a "$CI_LOG") 2>&1
+          docker compose up -d --build
+      - name: Prometheus scrapes the service and the alert fires
+        run: |
+          exec > >(tee -a "$CI_LOG") 2>&1
+          for _ in $(seq 1 60); do curl -sf localhost:9090/-/ready && break; sleep 2; done
+          targets=""; alerts=""
+          for _ in $(seq 1 30); do
+            targets=$(curl -s localhost:9090/api/v1/targets | python3 -c "import sys, json; print(' '.join(t['labels']['job'] + '=' + t['health'] for t in json.load(sys.stdin)['data']['activeTargets']))")
+            alerts=$(curl -s localhost:9090/api/v1/alerts | python3 -c "import sys, json; print(' '.join(a['labels']['alertname'] + ':' + a['state'] for a in json.load(sys.stdin)['data']['alerts']))")
+            echo "targets: $targets | alerts: $alerts"
+            if [[ "$targets" == *"delivery_service=up"* && "$alerts" == *"HighPendingDeliveries:firing"* ]]; then break; fi
+            sleep 5
+          done
+          curl -s localhost:8000/metrics | grep -E '^(total|pending|on_the_way)_deliveries' > /tmp/ex6.txt
+          printf 'targets: %s\nalerts: %s\n' "$targets" "$alerts" >> /tmp/ex6.txt
+          bash "$GITHUB_WORKSPACE/.github/scripts/notice.sh" "Exercise 6" /tmp/ex6.txt
+          [[ "$targets" == *"delivery_service=up"* && "$alerts" == *"HighPendingDeliveries:firing"* ]]
+      - name: Grafana has the data source and the dashboard
+        run: |
+          exec > >(tee -a "$CI_LOG") 2>&1
+          for _ in $(seq 1 30); do curl -sf localhost:3000/api/health && break; sleep 2; done
+          curl -sf -u admin:admin localhost:3000/api/datasources/uid/prometheus/health
+          curl -sf -u admin:admin "localhost:3000/api/search?query=ZAPPTTO" | grep zappto-delivery
+      - if: failure()
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/annotate_failure.sh" "docker compose ps; docker compose logs --tail 20"
+
+  assignment1a:
+    name: "Assignment 1 (option 1): Docker SDK"
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: Assignments/Assignment-1A-Dockerized-Multi-Container-CRUD-App/scripts
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -q -r requirements.txt
+      - name: Build image, network, volume, containers
+        run: |
+          exec > >(tee -a "$CI_LOG") 2>&1
+          python setup_network.py
+          curl -sf -X POST localhost:5000/api/books -H "Content-Type: application/json" -d '{"title":"The Phoenix Project","author":"Gene Kim","year":2013}'
+          curl -sf localhost:5000/api/books
+      - name: Inspect network + connectivity
+        run: |
+          exec > >(tee -a "$CI_LOG") 2>&1
+          python inspect_network.py --demo-disconnect | tee /tmp/a1a-net.txt
+          bash "$GITHUB_WORKSPACE/.github/scripts/notice.sh" "Assignment 1A network" /tmp/a1a-net.txt
+      - name: Container manager restarts an unhealthy / stopped app
+        run: |
+          exec > >(tee -a "$CI_LOG") 2>&1
+          python container_manager.py
+          curl -sf -X POST localhost:5000/admin/fail
+          python container_manager.py | tee /tmp/a1a-cm.txt
+          grep -q "recovered in" /tmp/a1a-cm.txt
+          docker stop crud-flask-app
+          python container_manager.py | tee -a /tmp/a1a-cm.txt
+          python container_manager.py | tee -a /tmp/a1a-cm.txt | grep "crud-flask-app healthy"
+          bash "$GITHUB_WORKSPACE/.github/scripts/notice.sh" "Assignment 1A container manager" /tmp/a1a-cm.txt
+      - name: Data persists across DB container re-creation
+        run: |
+          exec > >(tee -a "$CI_LOG") 2>&1
+          python verify_persistence.py
+      - name: Teardown
+        run: python teardown.py --volumes
+      - if: failure()
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/annotate_failure.sh" "docker ps -a; docker logs crud-flask-app | tail -20"
+
+  apparmor:
+    name: "Ex 5 + Assignment 1 (option 2): AppArmor"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Load the AppArmor profiles
+        run: |
+          exec > >(tee -a "$CI_LOG") 2>&1
+          sudo apt-get install -y -qq apparmor-utils > /dev/null
+          pip install -q docker==7.1.0 requests
+          sudo aa-status | head -2
+          docker info --format '{{json .SecurityOptions}}'
+          sudo cp Exercises/05-Docker-Security-AppArmor/my-apparmor-profile /etc/apparmor.d/my-apparmor-profile
+          sudo cp Assignments/Assignment-1B-Secured-App-AppArmor-Health-Monitoring/apparmor/flask-auth-profile /etc/apparmor.d/flask-auth-profile
+          sudo apparmor_parser -r -W /etc/apparmor.d/my-apparmor-profile
+          sudo apparmor_parser -r -W /etc/apparmor.d/flask-auth-profile
+          sudo aa-status | grep -E "my-apparmor-profile|flask-auth-profile"
+      - name: "Ex 5 Task 4: apply the profile with the Docker SDK"
+        working-directory: Exercises/05-Docker-Security-AppArmor
+        run: |
+          exec > >(tee -a "$CI_LOG") 2>&1
+          python apply_apparmor.py | tee /tmp/ex5-apply.txt
+          tail -n 8 /tmp/ex5-apply.txt | bash "$GITHUB_WORKSPACE/.github/scripts/notice.sh" "Exercise 5 apply_apparmor.py"
+      - name: "Ex 5 Task 5: restricted actions"
+        working-directory: Exercises/05-Docker-Security-AppArmor
+        run: |
+          exec > >(tee -a "$CI_LOG") 2>&1
+          rc=0; python test_restricted_actions.py > /tmp/ex5.txt 2>&1 || rc=$?
+          cat /tmp/ex5.txt
+          bash "$GITHUB_WORKSPACE/.github/scripts/notice.sh" "Exercise 5 test_restricted_actions.py" /tmp/ex5.txt
+          exit $rc
+      - name: "Assignment 1B: deploy the secured stack"
+        working-directory: Assignments/Assignment-1B-Secured-App-AppArmor-Health-Monitoring/scripts
+        run: |
+          exec > >(tee -a "$CI_LOG") 2>&1
+          python deploy_secure_stack.py
+      - name: "Assignment 1B: verify AppArmor enforcement"
+        working-directory: Assignments/Assignment-1B-Secured-App-AppArmor-Health-Monitoring/scripts
+        run: |
+          exec > >(tee -a "$CI_LOG") 2>&1
+          rc=0; python verify_apparmor.py > /tmp/a1b.txt 2>&1 || rc=$?
+          cat /tmp/a1b.txt
+          bash "$GITHUB_WORKSPACE/.github/scripts/notice.sh" "Assignment 1B verify_apparmor.py" /tmp/a1b.txt
+          exit $rc
+      - name: "Assignment 1B: health monitor restarts the broken app and alerts"
+        working-directory: Assignments/Assignment-1B-Secured-App-AppArmor-Health-Monitoring/scripts
+        run: |
+          exec > >(tee -a "$CI_LOG") 2>&1
+          python health_monitor.py --interval 3 --threshold 2 --cycles 15 > /tmp/monitor.txt 2>&1 &
+          sleep 8
+          curl -sf -X POST localhost:5050/admin/fail
+          wait
+          cat /tmp/monitor.txt
+          bash "$GITHUB_WORKSPACE/.github/scripts/notice.sh" "Assignment 1B health_monitor.py" /tmp/monitor.txt
+          grep -q "recovered after" /tmp/monitor.txt
+          grep -q "ALERT:" /tmp/monitor.txt
+          grep -q "restarting secure-flask-app" logs/health_monitor.log
+      - if: failure()
+        run: bash .github/scripts/annotate_failure.sh "docker ps -a; docker logs secure-flask-app 2>&1 | tail -20; sudo dmesg | grep -i apparmor | tail -20"
+
+  k8s:
+    name: "Minikube: Ex 1, 2, 3 + Assignment 2 autoscaling"
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Start Minikube
+        run: |
+          exec > >(tee -a "$CI_LOG") 2>&1
+          curl -sLo minikube https://storage.googleapis.com/minikube/releases/latest/minikube-linux-amd64
+          sudo install minikube /usr/local/bin/minikube && rm minikube
+          minikube start --driver=docker --cpus=4 --memory=8g
+          kubectl get nodes
+      - name: "Ex 1: Hello Pod"
+        working-directory: Exercises/01-Kubernetes-Getting-Started
+        run: |
+          exec > >(tee -a "$CI_LOG") 2>&1
+          kubectl apply -f hello-k8s.yaml
+          kubectl wait --for=condition=Ready pod/hello-k8s --timeout=180s
+          curl -s "$(minikube service hello-k8s --url)" | grep "Welcome to nginx"
+          kubectl delete -f hello-k8s.yaml
+      - name: "Ex 2: Flask Deployment + Service"
+        working-directory: Exercises/02-Minikube-Kubectl-Flask
+        run: |
+          exec > >(tee -a "$CI_LOG") 2>&1
+          minikube image build -t flask-app:latest .
+          kubectl apply -f flask-deployment.yaml
+          kubectl rollout status deployment/flask-app --timeout=180s
+          out=$(curl -s "$(minikube service flask-app-service --url)")
+          echo "$out"
+          [ "$out" = "Hello from Flask on Kubernetes!" ]
+          kubectl delete -f flask-deployment.yaml
+      - name: "Ex 3: ReplicaSet scaling, self-healing, load distribution"
+        working-directory: Exercises/03-Minikube-Scaling-Flask-App-with-Replicasets
+        run: |
+          exec > >(tee -a "$CI_LOG") 2>&1
+          ready() { kubectl get rs flashsale-rs -o jsonpath='{.status.readyReplicas}'; }
+          minikube image build -t flashsale:1.0 .
+          kubectl apply -f flashsale-replicaset.yaml
+          for _ in $(seq 1 60); do [ "$(ready)" = 3 ] && break; sleep 3; done; [ "$(ready)" = 3 ]
+          kubectl scale rs flashsale-rs --replicas=5
+          for _ in $(seq 1 60); do [ "$(ready)" = 5 ] && break; sleep 3; done; [ "$(ready)" = 5 ]
+          victim=$(kubectl get pods -l app=flashsale -o jsonpath='{.items[0].metadata.name}')
+          kubectl delete pod "$victim"
+          for _ in $(seq 1 60); do [ "$(ready)" = 5 ] && break; sleep 3; done; [ "$(ready)" = 5 ]
+          kubectl get pods -o wide
+          bash load-test.sh 40 | tee /tmp/ex3.txt
+          bash "$GITHUB_WORKSPACE/.github/scripts/notice.sh" "Exercise 3: 40 /buy requests after deleting $victim" /tmp/ex3.txt
+          [ "$(wc -l < /tmp/ex3.txt)" -ge 3 ]
+          kubectl delete -f flashsale-replicaset.yaml
+      - name: "Assignment 2: deploy TreasureBook"
+        working-directory: Assignments/Assignment-2-TreasureBook
+        run: |
+          exec > >(tee -a "$CI_LOG") 2>&1
+          minikube addons enable metrics-server
+          minikube image build -t treasurebook-api:1.0 ./app
+          kubectl apply -f k8s/
+          kubectl rollout status deployment/mongodb --timeout=300s
+          kubectl rollout status deployment/treasurebook-api --timeout=300s
+          bash loadtest/seed_data.sh "$(minikube service treasurebook-api --url)" | tee /tmp/seed.txt
+          grep -q '"found":true' /tmp/seed.txt
+          bash "$GITHUB_WORKSPACE/.github/scripts/notice.sh" "Assignment 2 seed data" /tmp/seed.txt
+      - name: "Assignment 2: load test + HPA scaling"
+        working-directory: Assignments/Assignment-2-TreasureBook
+        run: |
+          exec > >(tee -a "$CI_LOG") 2>&1
+          for _ in $(seq 1 60); do kubectl top pods -l app=treasurebook-api > /dev/null 2>&1 && break; sleep 5; done
+          kubectl get hpa
+          kubectl create configmap treasurebook-loadtest --from-file=loadtest/load_test.py
+          kubectl apply -f loadtest/loadtest-job.yaml
+          start=$(date +%s); job_end=""; top_taken=""
+          echo "t_s,cpu_pct,desired,current,running" > /tmp/scaling.csv
+          while [ $(( $(date +%s) - start )) -lt 720 ]; do
+            t=$(( $(date +%s) - start ))
+            hpa=$(kubectl get hpa treasurebook-api -o jsonpath='{.status.currentMetrics[0].resource.current.averageUtilization},{.status.desiredReplicas},{.status.currentReplicas}')
+            running=$(kubectl get pods -l app=treasurebook-api --field-selector=status.phase=Running --no-headers | wc -l)
+            echo "$t,$hpa,$running" | tee -a /tmp/scaling.csv
+            if [ -z "$top_taken" ] && [ "$t" -ge 120 ]; then kubectl top pods > /tmp/top.txt 2>&1; top_taken=1; fi
+            if [ -z "$job_end" ] && [ -n "$(kubectl get job treasurebook-loadtest -o jsonpath='{.status.completionTime}{.status.failed}')" ]; then job_end=$t; fi
+            if [ -n "$job_end" ] && [ "$t" -ge $(( job_end + 200 )) ]; then break; fi
+            sleep 10
+          done
+          kubectl logs job/treasurebook-loadtest | tee /tmp/loadtest.txt
+          bash "$GITHUB_WORKSPACE/.github/scripts/notice.sh" "Assignment 2 load test summary" /tmp/loadtest.txt
+          bash "$GITHUB_WORKSPACE/.github/scripts/notice.sh" "Assignment 2 scaling timeline (job ended at t=${job_end}s)" /tmp/scaling.csv
+          bash "$GITHUB_WORKSPACE/.github/scripts/notice.sh" "Assignment 2 kubectl top pods at peak" /tmp/top.txt
+          max=$(tail -n +2 /tmp/scaling.csv | cut -d, -f5 | sort -n | tail -1)
+          echo "max running API pods: $max"
+          [ "$max" -ge 6 ]
+      - if: failure()
+        run: bash .github/scripts/annotate_failure.sh "kubectl get all; kubectl describe hpa treasurebook-api | tail -20"
+
+  k8s-multinode:
+    name: "Minikube 3 nodes: Ex 10"
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: Exercises/10-Minikube-Multi-Node-Multi-App-Deployment
+    steps:
+      - uses: actions/checkout@v4
+      - name: Start a 3-node cluster
+        run: |
+          exec > >(tee -a "$CI_LOG") 2>&1
+          curl -sLo minikube https://storage.googleapis.com/minikube/releases/latest/minikube-linux-amd64
+          sudo install minikube /usr/local/bin/minikube && rm minikube
+          minikube start --nodes 3 -p devops-multinode --driver=docker --cpus=2 --memory=3g
+          kubectl get nodes
+      - name: Build, load and deploy both apps
+        run: |
+          exec > >(tee -a "$CI_LOG") 2>&1
+          docker build -t product-catalog:latest -f Dockerfile.product .
+          docker build -t shopping-cart:latest -f Dockerfile.shopping .
+          minikube -p devops-multinode image load product-catalog:latest
+          minikube -p devops-multinode image load shopping-cart:latest
+          kubectl apply -f product_catalog_deployment.yaml -f shopping_cart_deployment.yaml \
+                        -f product_catalog_service.yaml -f shopping_cart_service.yaml
+          kubectl rollout status deployment/product-catalog --timeout=300s
+          kubectl rollout status deployment/shopping-cart --timeout=300s
+      - name: Replicas are spread over different nodes and the APIs work
+        run: |
+          exec > >(tee -a "$CI_LOG") 2>&1
+          nodes() { kubectl get pods -l "app=$1" -o jsonpath='{range .items[*]}{.spec.nodeName}{"\n"}{end}' | sort -u | wc -l; }
+          kubectl get pods -o wide | tee /tmp/ex10.txt
+          [ "$(nodes product-catalog)" = 2 ] && [ "$(nodes shopping-cart)" = 3 ]
+          P=$(minikube -p devops-multinode service product-catalog-service --url)
+          C=$(minikube -p devops-multinode service shopping-cart-service --url)
+          { curl -sf "$P/products"; echo; \
+            curl -sf -X POST "$C/cart" -H "Content-Type: application/json" -d '{"id": 1, "name": "Laptop", "quantity": 1}'; echo; \
+            curl -sf "$C/whoami"; echo; } | tee -a /tmp/ex10.txt
+      - name: Node failure experiment (drain m02)
+        run: |
+          exec > >(tee -a "$CI_LOG") 2>&1
+          kubectl drain devops-multinode-m02 --ignore-daemonsets --delete-emptydir-data --timeout=180s
+          sleep 20
+          echo "--- after draining devops-multinode-m02" >> /tmp/ex10.txt
+          kubectl get pods -o wide | tee -a /tmp/ex10.txt
+          pending=$(kubectl get pods -l app=shopping-cart --field-selector=status.phase=Pending --no-headers | wc -l)
+          catalog=$(kubectl get pods -l app=product-catalog --field-selector=status.phase=Running --no-headers | wc -l)
+          echo "pending shopping-cart pods: $pending, running product-catalog pods: $catalog" | tee -a /tmp/ex10.txt
+          kubectl uncordon devops-multinode-m02
+          bash "$GITHUB_WORKSPACE/.github/scripts/notice.sh" "Exercise 10" /tmp/ex10.txt
+          [ "$pending" = 1 ] && [ "$catalog" = 2 ]
+      - if: failure()
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/annotate_failure.sh" "kubectl get pods -o wide; kubectl describe pods | grep -A8 Events | tail -40"
+
+  jenkins:
+    name: "Jenkins pipelines: Ex 8, 9, 6"
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: Start Jenkins (Exercise 7 image)
+        run: |
+          exec > >(tee -a "$CI_LOG") 2>&1
+          bash .github/scripts/jenkins_start.sh
+      - name: "Ex 8: Hello World"
+        run: |
+          exec > >(tee -a "$CI_LOG") 2>&1
+          bash .github/scripts/jenkins_run.sh ex08-hello-world Exercises/08-Jenkins-Hello-World-Job/Jenkinsfile
+      - name: "Ex 9: multi-stage pipeline"
+        run: |
+          exec > >(tee -a "$CI_LOG") 2>&1
+          bash .github/scripts/jenkins_run.sh ex09-multistage Exercises/09-Jenkins-Multi-Stage-Pipeline/Jenkinsfile
+          curl -sf localhost:5000/
+      - name: "Ex 6: monitoring stack deployed by Jenkins"
+        run: |
+          exec > >(tee -a "$CI_LOG") 2>&1
+          bash .github/scripts/jenkins_run.sh ex06-monitoring Exercises/06-Grafana-Realtime-Monitoring-of-Quick-Commerce-App/Jenkinsfile
+          docker ps --format '{{.Names}}  {{.Status}}'
+      - if: failure()
+        run: bash .github/scripts/annotate_failure.sh "docker logs --tail 30 jenkins"
+
+  assignment4-llm:
+    name: "Assignment 4: fine-tune + serve the LLM"
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: Assignments/Assignment-4-LLM-Course-Name-Extraction
+    steps:
+      - uses: actions/checkout@v4
+      - name: docker build (fine-tunes the model)
+        run: |
+          exec > >(tee -a "$CI_LOG") 2>&1
+          docker build --progress=plain -t course-extraction-api . 2>&1 | tee /tmp/a4-build.txt
+          grep -E "Training examples|'loss'|train_runtime|\[OK \]|\[MISS\]|Held-out" /tmp/a4-build.txt \
+            | sed 's/^#[0-9]* [0-9.]* //' | bash "$GITHUB_WORKSPACE/.github/scripts/notice.sh" "Assignment 4 training"
+      - name: Run the container and call the API
+        run: |
+          exec > >(tee -a "$CI_LOG") 2>&1
+          docker run -d --name course-api -p 8080:80 course-extraction-api
+          for _ in $(seq 1 60); do curl -sf localhost:8080/health && break; sleep 3; done
+          : > /tmp/a4.txt
+          for text in "Introduction to Artificial Intelligence" \
+                      "This semester I have Operating Systems, Cloud Computing and DevOps." \
+                      "Has anyone taken Machine Learning with Prof. Rao?" \
+                      "The canteen opens at eight."; do
+            body=$(python3 -c 'import json, sys; print(json.dumps({"text": sys.argv[1]}))' "$text")
+            curl -sf -X POST localhost:8080/extract-course-name/ -H "Content-Type: application/json" -d "$body" | tee -a /tmp/a4.txt
+            echo >> /tmp/a4.txt
+          done
+          bash "$GITHUB_WORKSPACE/.github/scripts/notice.sh" "Assignment 4 API responses" /tmp/a4.txt
+          grep -q '"extracted_course_names":\["Introduction to Artificial Intelligence"\]' /tmp/a4.txt
+      - if: failure()
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/annotate_failure.sh" "docker logs course-api 2>&1 | tail -30"

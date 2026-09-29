@@ -1,0 +1,113 @@
+# Assignment 3 - CI/CD for the VisualCraft AI Artistic Style Service.
+# Every push that changes the assignment runs the tests first, then deploys the stack with Docker Compose,
+# verifies the API, monitoring and self-healing, and publishes the stylized image as an artifact.
+name: "Assignment 3 - VisualCraft CI/CD"
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "Assignments/Assignment-3-VisualCraft-AI-Artistic/**"
+      - ".github/workflows/visualcraft-cicd.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: visualcraft-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CI_LOG: /tmp/ci.log
+
+defaults:
+  run:
+    working-directory: Assignments/Assignment-3-VisualCraft-AI-Artistic
+
+jobs:
+  test:
+    name: Run tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -q -r gateway/requirements.txt pytest
+      - name: Unit tests (gateway)
+        run: python -m pytest -v gateway/tests
+      - name: Validate docker-compose.yml
+        run: docker compose config -q
+
+  deploy:
+    name: Deploy and verify
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -q requests
+      - name: Pull the AI Artistic Style image
+        run: docker pull urmsandeep/ai-artistic-style-service:latest
+      - name: Deploy with Docker Compose
+        run: |
+          exec > >(tee -a "$CI_LOG") 2>&1
+          docker compose up -d --build
+          docker compose ps
+      - name: API test (smoke test)
+        run: |
+          exec > >(tee -a "$CI_LOG") 2>&1
+          python tests/smoke_test.py --url http://localhost:5001 --wait 300 --output output/styled_output.jpg | tee /tmp/smoke.txt
+          bash "$GITHUB_WORKSPACE/.github/scripts/notice.sh" "VisualCraft smoke test" /tmp/smoke.txt
+      - name: Generate traffic (200 / 400 / 500)
+        run: |
+          exec > >(tee -a "$CI_LOG") 2>&1
+          python scripts/generate_traffic.py --requests 40 --concurrency 4 | tee /tmp/traffic.txt
+          bash "$GITHUB_WORKSPACE/.github/scripts/notice.sh" "VisualCraft traffic" /tmp/traffic.txt
+      - name: Prometheus scrapes all targets and records the API metrics
+        run: |
+          exec > >(tee -a "$CI_LOG") 2>&1
+          query() { curl -s --get localhost:9090/api/v1/query --data-urlencode "query=$1"; }
+          targets=""
+          for _ in $(seq 1 30); do
+            targets=$(curl -s localhost:9090/api/v1/targets | python3 -c "import sys, json; print(' '.join(t['labels']['job'] + '=' + t['health'] for t in json.load(sys.stdin)['data']['activeTargets']))")
+            echo "targets: $targets"
+            [[ "$targets" != *"=down"* && "$targets" != *"=unknown"* ]] && break
+            sleep 5
+          done
+          {
+            echo "targets: $targets"
+            echo "requests by status: $(query 'sum by (status) (styletransfer_requests_total)')"
+            echo "avg latency (s): $(query 'sum(rate(styletransfer_request_duration_seconds_sum[5m])) / sum(rate(styletransfer_request_duration_seconds_count[5m]))')"
+            echo "AI container CPU %: $(query 'sum by (name) (rate(container_cpu_usage_seconds_total{name="ai-artistic-style"}[1m])) * 100')"
+            echo "AI container memory: $(query 'sum by (name) (container_memory_working_set_bytes{name="ai-artistic-style"})')"
+          } | tee /tmp/prom.txt
+          bash "$GITHUB_WORKSPACE/.github/scripts/notice.sh" "VisualCraft Prometheus" /tmp/prom.txt
+          [[ "$targets" != *"=down"* && "$targets" != *"=unknown"* ]]
+          grep -q '"status":"200"' /tmp/prom.txt && grep -q '"status":"400"' /tmp/prom.txt
+          grep -q 'ai-artistic-style' /tmp/prom.txt
+      - name: Grafana dashboard is provisioned
+        run: |
+          exec > >(tee -a "$CI_LOG") 2>&1
+          for _ in $(seq 1 30); do curl -sf localhost:3000/api/health && break; sleep 2; done
+          curl -sf -u admin:admin localhost:3000/api/datasources/uid/prometheus/health
+          curl -sf -u admin:admin "localhost:3000/api/search?query=VisualCraft" | grep visualcraft-api
+      - name: Resilience test (crash -> automatic restart -> recovery)
+        run: |
+          exec > >(tee -a "$CI_LOG") 2>&1
+          bash scripts/resilience_test.sh | tee /tmp/resilience.txt
+          grep -E "^==|restarted|PASS" /tmp/resilience.txt | bash "$GITHUB_WORKSPACE/.github/scripts/notice.sh" "VisualCraft resilience"
+      - name: Upload the stylized images
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: styled-output
+          path: Assignments/Assignment-3-VisualCraft-AI-Artistic/output/
+          if-no-files-found: ignore
+      - name: Report failure details
+        if: failure()
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/annotate_failure.sh" "docker compose ps -a; docker compose logs --tail 25"
+      - name: Tear down
+        if: always()
+        run: docker compose down -v
