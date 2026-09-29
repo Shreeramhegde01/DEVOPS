@@ -1,0 +1,12 @@
+// Pipeline version of the Hello World job (the exercise itself uses a Freestyle job - see README).
+// Script Path: Exercises/08-Jenkins-Hello-World-Job/Jenkinsfile
+pipeline {
+    agent any
+    stages {
+        stage('Hello World') {
+            steps {
+                sh 'sh Exercises/08-Jenkins-Hello-World-Job/hello-world.sh'
+            }
+        }
+    }
+}
