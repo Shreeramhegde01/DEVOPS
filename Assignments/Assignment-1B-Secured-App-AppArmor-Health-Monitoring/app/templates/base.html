@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}SecureAuth{% endblock %} · SecureAuth</title>
+  <style>
+    body { font-family: system-ui, sans-serif; background: #f5f7fa; color: #1f2933; margin: 0; }
+    main { max-width: 380px; margin: 4rem auto; background: #fff; padding: 2rem; border-radius: 10px;
+           box-shadow: 0 2px 10px rgba(0,0,0,.08); }
+    h1 { margin-top: 0; font-size: 1.5rem; }
+    label { display: block; margin: .8rem 0 .3rem; font-size: .9rem; }
+    input { width: 100%; box-sizing: border-box; padding: .55rem; border: 1px solid #cbd2d9; border-radius: 6px; }
+    button { margin-top: 1.2rem; width: 100%; padding: .6rem; border: 0; border-radius: 6px; background: #2563eb;
+             color: #fff; font-size: 1rem; cursor: pointer; }
+    .flash { padding: .6rem .8rem; border-radius: 6px; margin-bottom: 1rem; font-size: .9rem; }
+    .flash.error { background: #fde8e8; color: #9b1c1c; } .flash.success { background: #def7ec; color: #03543f; }
+    p.alt { font-size: .9rem; text-align: center; margin-bottom: 0; } a { color: #2563eb; }
+  </style>
+</head>
+<body>
+  <main>
+    {% for category, message in get_flashed_messages(with_categories=true) %}
+      <div class="flash {{ category }}">{{ message }}</div>
+    {% endfor %}
+    {% block content %}{% endblock %}
+  </main>
+</body>
+</html>

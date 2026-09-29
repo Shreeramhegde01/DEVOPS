@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block title %}Register{% endblock %}
+{% block content %}
+  <h1>Create an account</h1>
+  <form method="post">
+    <label for="username">Username</label>
+    <input id="username" name="username" pattern="[A-Za-z0-9_.\-]{3,32}" autocomplete="username" required>
+    <label for="password">Password (min. 8 characters)</label>
+    <input id="password" name="password" type="password" minlength="8" autocomplete="new-password" required>
+    <button type="submit">Register</button>
+  </form>
+  <p class="alt">Already registered? <a href="{{ url_for('login') }}">Log in</a></p>
+{% endblock %}

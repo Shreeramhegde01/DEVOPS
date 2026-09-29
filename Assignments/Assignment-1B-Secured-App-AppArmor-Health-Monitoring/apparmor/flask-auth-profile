@@ -1,0 +1,62 @@
+#include <tunables/global>
+
+# AppArmor profile for the SecureAuth Flask container.
+#   sudo cp flask-auth-profile /etc/apparmor.d/flask-auth-profile
+#   sudo apparmor_parser -r -W /etc/apparmor.d/flask-auth-profile
+#   docker run --security-opt apparmor=flask-auth-profile ...   (scripts/deploy_secure_stack.py does this)
+profile flask-auth-profile flags=(attach_disconnected,mediate_deleted) {
+  #include <abstractions/base>
+
+  # Network: the app serves HTTP and talks to MongoDB over TCP only
+  network inet tcp,
+  network inet udp,
+  network inet6 tcp,
+  network inet6 udp,
+  deny network raw,
+  deny network packet,
+
+  # Files: allowed by default (Python runtime), with the sensitive parts carved out below
+  file,
+  umount,
+
+  # 1. Account databases and root's home are unreadable
+  deny /etc/passwd rwklx,
+  deny /etc/shadow rwklx,
+  deny /etc/gshadow rwklx,
+  deny /root/** rwklx,
+
+  # 2. The application code cannot be modified (defacement / backdoor protection)
+  deny /app/** wl,
+
+  # 3. System directories are read-only
+  deny /bin/** wl,
+  deny /boot/** wl,
+  deny /etc/** wl,
+  deny /lib/** wl,
+  deny /lib64/** wl,
+  deny /sbin/** wl,
+  deny /usr/** wl,
+  deny /var/** wl,
+
+  # 4. No shells, package managers or download tools
+  deny /{,usr/}bin/bash mrwklx,
+  deny /{,usr/}bin/dash mrwklx,
+  deny /{,usr/}bin/sh mrwklx,
+  deny /{,usr/}bin/curl mrwklx,
+  deny /{,usr/}bin/wget mrwklx,
+  deny /{,usr/}bin/apt* mrwklx,
+  deny /usr/local/bin/pip* mrwklx,
+
+  # 5. No privileged kernel operations
+  deny capability sys_admin,
+  deny capability sys_module,
+  deny capability sys_ptrace,
+  deny mount,
+  deny @{PROC}/* w,
+  deny @{PROC}/sysrq-trigger rwklx,
+  deny @{PROC}/mem rwklx,
+  deny @{PROC}/kmem rwklx,
+  deny @{PROC}/kcore rwklx,
+  deny /sys/firmware/** rwklx,
+  deny /sys/kernel/security/** rwklx,
+}

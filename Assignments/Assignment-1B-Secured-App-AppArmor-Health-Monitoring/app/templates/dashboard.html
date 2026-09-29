@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}Dashboard{% endblock %}
+{% block content %}
+  <h1>Welcome, {{ username }}!</h1>
+  <p>You are logged in to a Flask container confined by an AppArmor profile, with user data stored in a separate
+     MongoDB container.</p>
+  <p>Registered users: <strong>{{ user_count }}</strong></p>
+  <p class="alt"><a href="{{ url_for('logout') }}">Log out</a></p>
+{% endblock %}
