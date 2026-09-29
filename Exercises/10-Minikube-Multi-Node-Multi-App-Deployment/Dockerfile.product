@@ -1,0 +1,7 @@
+# Dockerfile for Product Catalog
+FROM python:3.11-slim
+WORKDIR /app
+RUN pip install --no-cache-dir flask==3.0.3
+COPY product_catalog.py /app/
+EXPOSE 80
+CMD ["python", "product_catalog.py"]
