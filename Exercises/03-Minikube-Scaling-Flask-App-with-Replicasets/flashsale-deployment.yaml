@@ -1,0 +1,44 @@
+# Additional challenge: the same app managed by a Deployment instead of a bare ReplicaSet.
+# A Deployment creates and owns a ReplicaSet, and adds rolling updates + rollbacks on top.
+#   kubectl apply -f flashsale-deployment.yaml
+#   kubectl set image deployment/flashsale-deploy flashsale-container=flashsale:1.1   # rolling update
+#   kubectl rollout undo deployment/flashsale-deploy                                 # rollback
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: flashsale-deploy
+  labels:
+    app: flashsale-deploy
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: flashsale-deploy
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        app: flashsale-deploy
+    spec:
+      containers:
+      - name: flashsale-container
+        image: flashsale:1.0
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 5000
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 5000
+          periodSeconds: 5
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "128Mi"
+          limits:
+            cpu: "500m"
+            memory: "256Mi"
