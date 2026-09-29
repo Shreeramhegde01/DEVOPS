@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+
+# Generated at runtime by the labs
+*.log
+logs/
+results/
+output/
+styled_*.jpg
+python-app-deploy/
+
+# Fine-tuned model artefacts (Assignment 4) - rebuilt inside the Docker image
+Assignments/Assignment-4-LLM-Course-Name-Extraction/model/
+Assignments/Assignment-4-LLM-Course-Name-Extraction/results/
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
