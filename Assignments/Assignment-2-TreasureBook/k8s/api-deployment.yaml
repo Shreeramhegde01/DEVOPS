@@ -1,0 +1,45 @@
+# TreasureBook API - 3 initial replicas; the HPA (api-hpa.yaml) scales between 3 and 10
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: treasurebook-api
+  labels:
+    app: treasurebook-api
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: treasurebook-api
+  template:
+    metadata:
+      labels:
+        app: treasurebook-api
+    spec:
+      containers:
+        - name: api
+          image: treasurebook-api:1.0
+          imagePullPolicy: IfNotPresent     # image is built into / loaded onto the Minikube node
+          ports:
+            - containerPort: 5000
+          env:
+            - name: MONGO_URI
+              value: mongodb://mongodb:27017/treasurebook
+          resources:
+            requests:                       # what the scheduler reserves; HPA % is relative to this
+              cpu: 100m
+              memory: 256Mi
+            limits:                         # hard ceiling per pod
+              cpu: 200m
+              memory: 512Mi
+          readinessProbe:                   # receive traffic only when MongoDB is reachable
+            httpGet:
+              path: /ready
+              port: 5000
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          livenessProbe:                    # restart the container if the process hangs
+            httpGet:
+              path: /health
+              port: 5000
+            initialDelaySeconds: 10
+            periodSeconds: 10

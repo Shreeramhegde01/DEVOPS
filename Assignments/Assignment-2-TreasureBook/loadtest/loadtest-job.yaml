@@ -1,0 +1,36 @@
+# Runs load_test.py inside the cluster (traffic goes through the Service, like real users, and does not
+# depend on the laptop's minikube tunnel).
+#   kubectl create configmap treasurebook-loadtest --from-file=load_test.py
+#   kubectl apply -f loadtest-job.yaml
+#   kubectl logs -f job/treasurebook-loadtest
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: treasurebook-loadtest
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 1800
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: loadtest
+          image: python:3.11-slim
+          command: ["python", "/scripts/load_test.py",
+                    "--url", "http://treasurebook-api:5000",
+                    "--duration", "180",
+                    "--concurrency", "30"]
+          resources:
+            requests:
+              cpu: 250m
+              memory: 128Mi
+            limits:
+              cpu: "1"
+              memory: 256Mi
+          volumeMounts:
+            - name: scripts
+              mountPath: /scripts
+      volumes:
+        - name: scripts
+          configMap:
+            name: treasurebook-loadtest

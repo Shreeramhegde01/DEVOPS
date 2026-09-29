@@ -1,0 +1,23 @@
+# Run TreasureBook locally without Kubernetes:  docker compose up -d --build   ->  http://localhost:5000
+name: treasurebook
+
+services:
+  api:
+    build: ./app
+    image: treasurebook-api:1.0
+    environment:
+      MONGO_URI: mongodb://mongodb:27017/treasurebook
+    ports:
+      - "5000:5000"
+    depends_on:
+      - mongodb
+    restart: unless-stopped
+
+  mongodb:
+    image: mongo:7.0
+    volumes:
+      - mongo-data:/data/db
+    restart: unless-stopped
+
+volumes:
+  mongo-data:
