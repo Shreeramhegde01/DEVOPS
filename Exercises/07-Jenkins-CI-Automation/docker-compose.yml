@@ -1,0 +1,24 @@
+# Jenkins for all the lab pipelines:   docker compose up -d --build
+# Web UI: http://localhost:8080
+name: devops-jenkins
+
+services:
+  jenkins:
+    build: .
+    image: devops-lab/jenkins:lts
+    container_name: jenkins
+    user: root                          # lets Jenkins use the mounted Docker socket (fine for a lab, not for production)
+    ports:
+      - "8080:8080"                     # web interface
+      - "50000:50000"                   # agent communication
+      - "5000:5000"                     # Exercise 9's Flask app, which the pipeline runs inside this container
+    volumes:
+      - jenkins_home:/var/jenkins_home  # jobs, plugins and build history survive restarts
+      - /var/run/docker.sock:/var/run/docker.sock
+    extra_hosts:
+      - "host.docker.internal:host-gateway"   # pipelines reach services published on the host (Assignment 3)
+    restart: unless-stopped
+
+volumes:
+  jenkins_home:
+    name: jenkins_home                  # same volume as the plain `docker run -v jenkins_home:...` command
