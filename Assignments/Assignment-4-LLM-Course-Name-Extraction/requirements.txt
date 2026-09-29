@@ -1,0 +1,10 @@
+# torch is installed separately in the Dockerfile from the CPU-only index:
+#   pip install torch==2.4.1+cpu --extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.4.1
+transformers==4.44.2
+accelerate==0.34.2
+datasets==2.21.0
+pandas==2.2.2
+numpy==1.26.4
+fastapi==0.115.0
+uvicorn==0.30.6
