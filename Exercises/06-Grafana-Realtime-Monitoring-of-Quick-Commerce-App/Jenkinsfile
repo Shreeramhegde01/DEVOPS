@@ -1,0 +1,100 @@
+// Jenkins pipeline for Exercise 6 - builds and deploys the ZAPPTTO monitoring stack.
+// Job type: Pipeline -> "Pipeline script from SCM" -> this repository,
+// Script Path: Exercises/06-Grafana-Realtime-Monitoring-of-Quick-Commerce-App/Jenkinsfile
+// Needs the Jenkins image from Exercise 7 (docker CLI + compose + python3, docker.sock mounted).
+pipeline {
+    agent any
+
+    environment {
+        APP_DIR = 'Exercises/06-Grafana-Realtime-Monitoring-of-Quick-Commerce-App'
+        COMPOSE_PROJECT_NAME = 'zappto-monitoring'
+    }
+
+    stages {
+        stage('Pre-check Docker') {
+            steps {
+                script {
+                    try {
+                        // Check if Docker is installed
+                        def dockerVersion = sh(script: 'docker --version', returnStdout: true).trim()
+                        if (!dockerVersion) {
+                            error "Docker is not installed or not in the PATH. Please install Docker."
+                        }
+
+                        // Check if Docker daemon is running
+                        def dockerInfo = sh(script: 'docker info > /dev/null', returnStatus: true)
+                        if (dockerInfo != 0) {
+                            error "Docker daemon is not running (or /var/run/docker.sock is not mounted into Jenkins)."
+                        }
+
+                        echo "Docker is available and running: ${dockerVersion}"
+                    } catch (Exception e) {
+                        error "Pre-check failed: ${e.message}"
+                    }
+                }
+            }
+        }
+
+        stage('Unit Test Metrics App') {
+            steps {
+                dir(env.APP_DIR) {
+                    sh '''
+                        python3 -m venv .venv
+                        .venv/bin/pip install -q -r requirements.txt
+                        .venv/bin/python -m unittest -v test_delivery_metrics.py
+                    '''
+                }
+            }
+        }
+
+        stage('Build Docker Images') {
+            steps {
+                dir(env.APP_DIR) {
+                    sh 'docker compose build'
+                }
+            }
+        }
+
+        stage('Run Application, Prometheus & Grafana') {
+            steps {
+                dir(env.APP_DIR) {
+                    sh 'docker compose up -d'
+                }
+            }
+        }
+
+        stage('Verify Monitoring Stack') {
+            steps {
+                dir(env.APP_DIR) {
+                    sh '''
+                        echo "Waiting for Prometheus to become ready..."
+                        for i in $(seq 1 30); do
+                          docker compose exec -T prometheus wget -qO- http://localhost:9090/-/ready && break
+                          sleep 2
+                        done
+
+                        echo "Metrics exposed by the delivery service:"
+                        docker compose exec -T delivery-metrics python -c \
+                          "import urllib.request; print(urllib.request.urlopen('http://localhost:8000/metrics').read().decode())" \
+                          | grep -E '^(total|pending|on_the_way)_deliveries'
+
+                        echo "Prometheus scrape targets:"
+                        docker compose exec -T prometheus wget -qO- http://localhost:9090/api/v1/targets \
+                          | grep -oE '"(job|health)":"[^"]*"'
+
+                        docker compose ps
+                    '''
+                }
+            }
+        }
+    }
+
+    post {
+        success {
+            echo 'Monitoring stack is up: metrics :8000, Prometheus :9090, Grafana :3000 (admin/admin)'
+        }
+        failure {
+            echo 'Pipeline failed - check the stage logs above.'
+        }
+    }
+}

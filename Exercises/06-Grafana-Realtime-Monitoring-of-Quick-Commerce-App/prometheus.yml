@@ -1,0 +1,21 @@
+global:
+  scrape_interval: 15s       # default scrape interval
+  evaluation_interval: 15s   # how often alert rules are evaluated
+
+scrape_configs:
+  - job_name: "prometheus"
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  - job_name: "delivery_service"
+    scrape_interval: 5s
+    static_configs:
+      # host.docker.internal = the machine running Docker, where port 8000 is served
+      # (either `python3 delivery_metrics.py` on the host, or the container published with -p 8000:8000).
+      #   - Docker Desktop (Windows / macOS): works out of the box
+      #   - Linux / WSL: run Prometheus with  --add-host=host.docker.internal:host-gateway
+      #     (docker-compose.yml already does this) or use the docker0 IP instead, e.g. "172.17.0.1:8000"
+      - targets: ["host.docker.internal:8000"]
+
+rule_files:
+  - /etc/prometheus/alert_rules.yml

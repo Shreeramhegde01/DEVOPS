@@ -1,0 +1,45 @@
+# One-command version of the whole exercise:  docker compose up -d --build
+#   metrics    -> http://localhost:8000/metrics
+#   Prometheus -> http://localhost:9090   (Status -> Targets, Alerts)
+#   Grafana    -> http://localhost:3000   (admin / admin, dashboard "ZAPPTTO Delivery Monitoring")
+name: zappto-monitoring
+
+services:
+  delivery-metrics:
+    build: .
+    image: zappto/delivery-metrics:latest
+    environment:
+      PENDING_MIN: ${PENDING_MIN:-10}
+      PENDING_MAX: ${PENDING_MAX:-20}
+      DELIVERY_TIME_MIN: ${DELIVERY_TIME_MIN:-15}
+      DELIVERY_TIME_MAX: ${DELIVERY_TIME_MAX:-45}
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+
+  prometheus:
+    build:
+      context: .
+      dockerfile: Dockerfile.prometheus
+    image: zappto/prometheus:latest
+    ports:
+      - "9090:9090"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"   # makes prometheus.yml's target work on Linux too
+    depends_on:
+      - delivery-metrics
+    restart: unless-stopped
+
+  grafana:
+    build:
+      context: .
+      dockerfile: Dockerfile.grafana
+    image: zappto/grafana:latest
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+    restart: unless-stopped

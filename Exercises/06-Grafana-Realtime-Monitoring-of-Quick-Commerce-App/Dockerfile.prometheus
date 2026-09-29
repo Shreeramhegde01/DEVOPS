@@ -1,0 +1,5 @@
+# Prometheus with our config baked in. Baking (instead of -v bind mounts) also works when the build is
+# triggered from Jenkins running in a container, where workspace paths do not exist on the Docker host.
+FROM prom/prometheus:v2.54.1
+COPY prometheus.yml /etc/prometheus/prometheus.yml
+COPY alert_rules.yml /etc/prometheus/alert_rules.yml

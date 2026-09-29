@@ -1,0 +1,9 @@
+# Grafana picks this up at start-up, so the Prometheus data source exists without clicking through the UI.
+apiVersion: 1
+datasources:
+  - name: Prometheus
+    uid: prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090      # service name on the docker compose network
+    isDefault: true

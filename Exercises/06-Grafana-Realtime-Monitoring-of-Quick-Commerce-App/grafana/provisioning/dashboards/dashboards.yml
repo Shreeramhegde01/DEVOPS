@@ -1,0 +1,7 @@
+apiVersion: 1
+providers:
+  - name: zappto-dashboards
+    folder: ZAPPTTO
+    type: file
+    options:
+      path: /etc/grafana/dashboards
