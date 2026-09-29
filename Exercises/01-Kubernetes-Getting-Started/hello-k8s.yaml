@@ -1,0 +1,30 @@
+# Declarative version of Exercise 1.
+# Same result as:
+#   kubectl run hello-k8s --image=nginx --port=80
+#   kubectl expose pod hello-k8s --type=NodePort --port=80
+#
+# Apply with:  kubectl apply -f hello-k8s.yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: hello-k8s
+  labels:
+    run: hello-k8s          # the label "kubectl run" adds; the Service selects on it
+spec:
+  containers:
+    - name: hello-k8s
+      image: nginx:1.27     # stands in for Zepto's storefront web app
+      ports:
+        - containerPort: 80
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: hello-k8s
+spec:
+  type: NodePort            # opens a port on the node so the browser can reach the pod
+  selector:
+    run: hello-k8s
+  ports:
+    - port: 80
+      targetPort: 80
