@@ -1,0 +1,65 @@
+#include <tunables/global>
+
+# Load with:   sudo apparmor_parser -r -W /etc/apparmor.d/my-apparmor-profile
+# Use with:    docker run --security-opt apparmor=my-apparmor-profile ...
+#
+# The profile NAME (not a binary path) is what Docker refers to, and Docker containers need the
+# attach_disconnected / mediate_deleted flags.
+profile my-apparmor-profile flags=(attach_disconnected,mediate_deleted) {
+  #include <abstractions/base>
+
+  # --- Network: the Flask app only needs TCP/UDP sockets (binds to port 5000) ---
+  network inet tcp,
+  network inet udp,
+  network inet6 tcp,
+  network inet6 udp,
+  deny network raw,
+  deny network packet,
+
+  # --- Files: start from "allow" (Python needs its libraries), then carve out what must be blocked ---
+  file,
+  umount,
+
+  # Permissions to the application directory
+  /app/** rwk,
+
+  # Deny access to sensitive system files
+  deny /etc/passwd rwklx,
+  deny /etc/shadow rwklx,
+  deny /etc/gshadow rwklx,
+  deny /root/** rwklx,
+
+  # Deny writes to system directories
+  deny /bin/** wl,
+  deny /boot/** wl,
+  deny /etc/** wl,
+  deny /lib/** wl,
+  deny /lib64/** wl,
+  deny /sbin/** wl,
+  deny /usr/** wl,
+  deny /var/** wl,
+
+  # Deny execution of shells and download tools (an attacker's first step after gaining code execution)
+  deny /{,usr/}bin/bash mrwklx,
+  deny /{,usr/}bin/dash mrwklx,
+  deny /{,usr/}bin/sh mrwklx,
+  deny /{,usr/}bin/curl mrwklx,
+  deny /{,usr/}bin/wget mrwklx,
+  deny /{,usr/}bin/apt* mrwklx,
+
+  # --- Capabilities ---
+  capability net_bind_service,
+  deny capability sys_admin,
+  deny capability sys_module,
+  deny capability sys_ptrace,
+
+  # --- Kernel interfaces (same protections as Docker's default profile) ---
+  deny mount,
+  deny @{PROC}/* w,
+  deny @{PROC}/sysrq-trigger rwklx,
+  deny @{PROC}/mem rwklx,
+  deny @{PROC}/kmem rwklx,
+  deny @{PROC}/kcore rwklx,
+  deny /sys/firmware/** rwklx,
+  deny /sys/kernel/security/** rwklx,
+}
