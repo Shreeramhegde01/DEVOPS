@@ -1,0 +1,106 @@
+// Multi-stage pipeline: Build -> Code Quality -> Test -> Deploy -> Run Application -> Test Application
+// Job type: Pipeline -> "Pipeline script from SCM" -> this repository,
+// Script Path: Exercises/09-Jenkins-Multi-Stage-Pipeline/Jenkinsfile
+pipeline {
+    agent any
+
+    environment {
+        APP_DIR  = 'Exercises/09-Jenkins-Multi-Stage-Pipeline'
+        APP_PORT = '5000'
+    }
+
+    stages {
+        stage('Build') {
+            steps {
+                dir(env.APP_DIR) {
+                    echo 'Creating virtual environment and installing dependencies...'
+                    sh '''
+                        python3 -m venv .venv
+                        .venv/bin/pip install --upgrade pip
+                        .venv/bin/pip install -r requirements.txt
+                    '''
+                }
+            }
+        }
+
+        stage('Code Quality') {
+            steps {
+                dir(env.APP_DIR) {
+                    echo 'Running code quality checks...'
+                    sh '''
+                        .venv/bin/pip install -q flake8
+                        .venv/bin/flake8 --exclude=.venv --max-line-length=120 .
+                    '''
+                }
+            }
+        }
+
+        stage('Test') {
+            steps {
+                dir(env.APP_DIR) {
+                    echo 'Running tests...'
+                    sh '.venv/bin/python -m unittest discover -s . -v'
+                }
+            }
+        }
+
+        stage('Deploy') {
+            steps {
+                echo 'Deploying application...'
+                sh '''
+                    mkdir -p "$WORKSPACE/python-app-deploy"
+                    cp "$WORKSPACE/$APP_DIR/app.py" "$WORKSPACE/python-app-deploy/"
+                '''
+            }
+        }
+
+        stage('Run Application') {
+            steps {
+                echo 'Running application...'
+                sh '''
+                    DEPLOY_DIR="$WORKSPACE/python-app-deploy"
+                    # stop the copy started by the previous build, if it is still running
+                    if [ -f "$DEPLOY_DIR/app.pid" ]; then
+                        kill "$(cat "$DEPLOY_DIR/app.pid")" 2>/dev/null || true
+                        sleep 1
+                    fi
+                    # BUILD_ID / JENKINS_NODE_COOKIE=dontKillMe: stop Jenkins from killing the background
+                    # process when this step finishes
+                    BUILD_ID=dontKillMe JENKINS_NODE_COOKIE=dontKillMe \
+                      nohup "$WORKSPACE/$APP_DIR/.venv/bin/python" "$DEPLOY_DIR/app.py" > "$DEPLOY_DIR/app.log" 2>&1 &
+                    echo $! > "$DEPLOY_DIR/app.pid"
+                    echo "Started app with PID $(cat "$DEPLOY_DIR/app.pid") on port $APP_PORT"
+                '''
+            }
+        }
+
+        stage('Test Application') {
+            steps {
+                echo 'Testing application...'
+                sh '''
+                    # smoke test against the running, deployed app
+                    for i in $(seq 1 15); do
+                        if RESPONSE=$(curl -fs "http://127.0.0.1:$APP_PORT/"); then
+                            echo "Response: $RESPONSE"
+                            [ "$RESPONSE" = "Hello, Jenkins Multi-Stage Pipeline!" ] && exit 0
+                            echo "Unexpected response"; exit 1
+                        fi
+                        sleep 1
+                    done
+                    echo "Application did not respond on port $APP_PORT"
+                    cat "$WORKSPACE/python-app-deploy/app.log"
+                    exit 1
+                '''
+            }
+        }
+    }
+
+    post {
+        success {
+            echo 'Pipeline completed successfully!'
+        }
+        failure {
+            echo 'Pipeline failed. Check the logs for more details.'
+        }
+    }
+}
